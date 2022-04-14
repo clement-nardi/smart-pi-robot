@@ -69,8 +69,6 @@ class MotorControl():
         self.pwm1.stop()
         self.pwm2.stop()
 
-    def __del__(self):
-        self.clean()
 
 
 def motor_test():
@@ -137,7 +135,7 @@ class Car():
         left_speed  = int(min(max( rel_angle + rel_speed, -100), 100))
         right_speed = int(min(max(-rel_angle + rel_speed, -100), 100))
 
-        print("-> left={:+03d} right={:+03d}".format(left_speed, right_speed))
+        # print("-> left={:+03d} right={:+03d}".format(left_speed, right_speed))
         
         if left_speed < 0:
             self.leftMotors.backward(-left_speed)
@@ -149,6 +147,7 @@ class Car():
             self.rightMotors.forward(right_speed)
 
     def stop(self):
+        GPIO.setmode(GPIO.BCM)
         self.drive(STOP, 0, 90)
 
 
@@ -159,42 +158,45 @@ def connection_lost():
     car.stop()
 
 def main():
-    try:
-        print("create server socket")
-        server_socket=bluetooth.BluetoothSocket( bluetooth.RFCOMM ) 
-        port = 1
-        print("bind")
-        server_socket.bind(("",port))
-        print("listen")
-        server_socket.listen(1)
-        
-        print("accept")
-        client_socket,address = server_socket.accept()
-        print ("Accepted connection from {}".format(address))
-
-        previous_time = 0
+    while 1:
+        car.stop()
         connection_lost_timer = threading.Timer(1, connection_lost)
-        while 1:
-            data = client_socket.recv(1024)
-            current_time = time.time()
-            connection_lost_timer.cancel()
-            connection_lost_timer = threading.Timer(1, connection_lost)
-            connection_lost_timer.start()
-            #for byte in data:
-            #    print("{} ".format(bin(byte)), end='')
-            #print("delay = {}".format(current_time - previous_time))
-            direction = data[0] & 3
-            speed = data[1]
-            angle = data[2]
-            print("{:8s} speed={:03d} angle={:03d} delay={:.2f}".format(dir2string(direction), speed, angle, current_time - previous_time))
-            car.drive(direction, speed, angle)
-            previous_time = current_time            
+        try:
+            print("create server socket")
+            server_socket=bluetooth.BluetoothSocket( bluetooth.RFCOMM ) 
+            port = 1
+            print("bind")
+            server_socket.bind(("",port))
+            print("listen")
+            server_socket.listen(1)
             
-        client_socket.close()
-        server_socket.close()
-    except bluetooth.btcommon.BluetoothError as btErr:
-        print("Bluetooth disconnected")
-        print(btErr)
+            print("accept")
+            client_socket,address = server_socket.accept()
+            print ("Accepted connection from {}".format(address))
+
+            previous_time = 0
+            while 1:
+                data = client_socket.recv(1024)
+                current_time = time.time()
+                connection_lost_timer.cancel()
+                connection_lost_timer = threading.Timer(1, connection_lost)
+                connection_lost_timer.start()
+                #for byte in data:
+                #    print("{} ".format(bin(byte)), end='')
+                #print("delay = {}".format(current_time - previous_time))
+                direction = data[0] & 3
+                speed = data[1]
+                angle = data[2]
+                # print("{:8s} speed={:03d} angle={:03d} delay={:.2f}".format(dir2string(direction), speed, angle, current_time - previous_time))
+                car.drive(direction, speed, angle)
+                previous_time = current_time
+                
+            client_socket.close()
+            server_socket.close()
+        except bluetooth.btcommon.BluetoothError as btErr:
+            #connection_lost_timer.cancel()
+            print("Bluetooth disconnected")
+            print(btErr)
 
 
 if __name__ == '__main__':
@@ -202,4 +204,9 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         print("CTRL-C: Terminating program.")
-    GPIO.cleanup()
+
+    print("just before exiting")
+
+    car.stop()
+    # GPIO.cleanup()
+    exit()

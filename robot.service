@@ -1,0 +1,15 @@
+[Unit]
+Description=Smart Pi Robot
+After=network.target
+StartLimitIntervalSec=0
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=pi
+ExecStart=python /home/pi/robot/robot.py
+StandardOutput=append:/home/pi/robot.log
+StandardError=append:/home/pi/robot.log
+
+[Install]
+WantedBy=multi-user.target
