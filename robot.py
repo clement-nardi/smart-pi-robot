@@ -9,6 +9,10 @@ FORWARD = 1
 STOP = 3
 BACKWARD = 2
 
+LEFT = 4
+RIGHT = 5
+NONE = 6
+
 def dir2string(dir):
     if dir == FORWARD:
         return "Forward"
@@ -102,6 +106,32 @@ def motor_test():
             print("Unexpected error:")
     GPIO.cleanup()
 
+class Blinker(threading.Thread):
+    
+    def __init__(self, LEDs):
+        threading.Thread.__init__(self)
+        self.LEDs = LEDs
+        self._stop_event = threading.Event()
+    
+    def stop(self):
+        self._stop_event.set()
+        for LED in self.LEDs:
+            GPIO.output(LED, False)
+
+    def stopped(self):
+        return self._stop_event.is_set()
+
+    def run(self):
+        is_on = True
+        while True:
+            if self.stopped():
+                return
+            else:
+                for LED in self.LEDs:
+                    GPIO.output(LED, is_on)
+                is_on = not is_on
+                time.sleep(0.4)
+            
 class Car():
 
     def __init__(self):
@@ -111,6 +141,12 @@ class Car():
         # This way, when we plug the car, the wheels automatically stop
         self.rightMotors = MotorControl(17, 27, -1, True, 500, False, "Moteurs de droite")
         self.leftMotors  = MotorControl(23, 24, -1, True, 500, False, "Moteurs de gauche")
+        self.LEDs = [4, 18, 22, 25, 19, 16, 13, 21]
+        self.current_blinker = None
+        self.current_blink_dir = NONE
+
+        for LED in self.LEDs:
+            GPIO.setup(LED, GPIO.OUT)            
     
     def drive(self, dir, speed, angle):
 
@@ -121,16 +157,18 @@ class Car():
 #  255 0   ->    0  100
 #  255 90  ->  100  100
 #  255 180 ->  100    0
-# -255 0   ->    0 -100
+# -255 0   -> -100    0
 # -255 90  -> -100 -100
-# -255 180 -> -100    0
+# -255 180 ->    0 -100
 
         rel_speed = speed
+        rel_angle = angle
         if dir == BACKWARD:
             rel_speed = -speed
+            rel_angle = 180-angle
 
         rel_speed = rel_speed * 100 / 255
-        rel_angle = (angle - 90) * 100 / 90
+        rel_angle = (rel_angle - 90) * 100 / 90
 
         left_speed  = int(min(max( rel_angle + rel_speed, -100), 100))
         right_speed = int(min(max(-rel_angle + rel_speed, -100), 100))
@@ -146,12 +184,50 @@ class Car():
         else:
             self.rightMotors.forward(right_speed)
 
+
+        if angle != 90:
+            if angle < 90:
+                self.blink(LEFT)
+            else:
+                self.blink(RIGHT)
+        else:
+            self.blink(NONE)
+
+
     def stop(self):
         GPIO.setmode(GPIO.BCM)
         self.drive(STOP, 0, 90)
 
+    def set_front_lights(self, are_on):
+        GPIO.output(self.LEDs[5], are_on)
+        GPIO.output(self.LEDs[6], are_on)
+
+    def set_rear_lights(self, are_on):
+        GPIO.output(self.LEDs[1], are_on)
+        GPIO.output(self.LEDs[3], are_on)
+
+    def blink(self, DIR):
+        if self.current_blink_dir != DIR:
+            self.current_blink_dir = DIR
+        else:
+            return
+
+        if self.current_blinker:
+            self.current_blinker.stop()
+        if DIR == NONE:
+            return
+        LEDs = None
+        if DIR == RIGHT:
+            LEDs = [self.LEDs[0], self.LEDs[4]]
+        elif DIR == LEFT:
+            LEDs = [self.LEDs[2], self.LEDs[7]]
+
+        self.current_blinker = Blinker(LEDs)
+        self.current_blinker.start()
+
 
 car = Car()
+
 
 def connection_lost():
     print("Connection Lost: stopping car")
@@ -181,14 +257,25 @@ def main():
                 connection_lost_timer.cancel()
                 connection_lost_timer = threading.Timer(1, connection_lost)
                 connection_lost_timer.start()
-                #for byte in data:
-                #    print("{} ".format(bin(byte)), end='')
-                #print("delay = {}".format(current_time - previous_time))
+                # for byte in data[:4]:
+                #     print("{} ".format(bin(byte)), end='')
+                # print("delay = {}".format(current_time - previous_time))
                 direction = data[0] & 3
                 speed = data[1]
                 angle = data[2]
-                # print("{:8s} speed={:03d} angle={:03d} delay={:.2f}".format(dir2string(direction), speed, angle, current_time - previous_time))
+                blue = (data[3] & 0b10000000) > 0
+                red  = (data[3] & 0b1000000) > 0
+                horn = (data[3] & 0b100000) > 0
+                a    = (data[3] & 0b10000) > 0
+                b    = (data[3] & 0b1000) > 0
+                c    = (data[3] & 0b100) > 0
+                # print("{:8s} speed={:03d} angle={:03d} delay={:.2f} {} {} {} {} {} {}".format(
+                #   dir2string(direction), speed, angle, 
+                #   current_time - previous_time,
+                #   blue, red, horn, a, b, c))
                 car.drive(direction, speed, angle)
+                car.set_front_lights(blue)
+                car.set_rear_lights(red)
                 previous_time = current_time
                 
             client_socket.close()
@@ -201,6 +288,15 @@ def main():
 
 if __name__ == '__main__':
     try:
+        
+        # GPIO.setmode(GPIO.BCM)
+        # GPIO.setwarnings(False)
+        # while True:
+        #     for pin in [4, 18, 22, 25, 12, 16, 26, 21]:
+        #         GPIO.setup(pin, GPIO.OUT)
+        #         GPIO.output(pin, True)
+        #         time.sleep(0.5)
+        #         GPIO.output(pin, False)
         main()
     except KeyboardInterrupt:
         print("CTRL-C: Terminating program.")
